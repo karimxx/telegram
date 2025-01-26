@@ -1,0 +1,104 @@
+import nest_asyncio
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
+from transformers import pipeline
+import logging
+
+# Allow nested event loops for async tasks
+nest_asyncio.apply()
+
+# Set up logging for detailed debugging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+
+# Replace with your Bot API key from BotFather
+TELEGRAM_BOT_TOKEN = "7298355099:AAF5W24KTMRMFSRRA2DfBSa7Cznz-Ylt5M0"
+
+# Initialize the AI text-generation model
+text_gen_model = pipeline(
+    task="text-generation",
+    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    max_new_tokens=150,
+    device="cpu",
+    pad_token_id=50256,
+    eos_token_id=50256,
+    truncation=True,
+)
+
+async def send_welcome_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Welcomes the user when they start the bot.
+    """
+    welcome_message = (
+        "Hello! 🤖 I'm a smart assistant powered by TinyLlama.\n\n"
+        "Feel free to ask me anything!"
+    )
+    await update.message.reply_text(welcome_message)
+
+async def process_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handles text messages sent by the user and provides AI-generated responses.
+    """
+    # Notify the user while processing
+    temp_message = await update.message.reply_text("Just a moment while I process your input...")
+    try:
+        # Prepare input for the AI model
+        user_prompt = f"<user>: {update.message.text}\n<bot>:"
+
+        # Generate AI response
+        response = text_gen_model(
+            user_prompt,
+            max_new_tokens=150,
+            num_return_sequences=1,
+            do_sample=True,
+            temperature=0.7,
+            pad_token_id=50256,
+        )
+
+        # Parse the output and refine it
+        ai_output = response[0]["generated_text"]
+        refined_response = ai_output.split("<bot>:")[-1].strip()
+        refined_response = refined_response.replace("<user>:", "").strip()
+
+        # Post-processing to clean the response
+        if "?" in refined_response:
+            refined_response = refined_response.split("?")[0] + "?"
+        if "\n\n" in refined_response:
+            refined_response = refined_response.split("\n\n")[0]
+        if len(refined_response) < 10:
+            refined_response = "I'm sorry, could you clarify your question?"
+
+        await temp_message.delete()
+
+        # Send the refined response
+        await update.message.reply_text(refined_response)
+    except Exception as error:
+        # Handle exceptions gracefully
+        error_message = f"Oops! Something went wrong: {error}"
+        await update.message.reply_text(error_message)
+
+def initialize_bot() -> None:
+    """
+    Configures and starts the bot application.
+    """
+    # Create bot application
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Add command and message handlers
+    app.add_handler(CommandHandler("start", send_welcome_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_user_message))
+
+    # Start the bot
+    print("The bot is active and ready to assist users!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == "__main__":
+    initialize_bot()
